@@ -10,10 +10,8 @@ import torch.nn.init as init
 import torchvision
 import os
 import cv2
+import pandas as pd
 
-
-# Dictionary related postion to x,y coordinates.
-# x is along the long axis and y is along the short axis
 label = {
     'PXL_20231006_105621514.TS': (1,1),
     'PXL_20231006_105839274.TS': (1,2),
@@ -40,13 +38,17 @@ label = {
 }
 
 class imageDataset(Dataset):
-    def __init__(self, folder_path, transform=None, resize=True):
+    # Dictionary related postion to x,y coordinates.
+    # x is along the long axis and y is along the short axis
+
+    def __init__(self, folder_path, device=None, transform=None, resize=True):
         # data loading
         self.folder_path = folder_path
         self.transform = transform
         self.resize = resize
         self.image_files = [f for f in os.listdir(folder_path) if os.path.isfile(os.path.join(folder_path, f))]
         self.position = [label[file_name.split(".mp4")[0]] for file_name in self.image_files]
+        self.device = device
 
     def __len__(self):
         return len(self.image_files)
@@ -65,17 +67,18 @@ class imageDataset(Dataset):
             img = img.permute(2, 1, 0)
 
             pos = torch.tensor(self.position[index],dtype=torch.float)
+        
+        if self.device:
+            img = img.to(self.device)
+            pos = pos.to(self.device)
 
         return img,pos
-
-# Define values
-n_outputs = 2 # (x,y) or maybe
 
 
 # define network
 class Model(nn.Module):
 
-    def __init__(self):
+    def __init__(self, n_outputs=2):
         super(Model, self).__init__()
 
         self.seq = nn.Sequential(
@@ -112,12 +115,12 @@ class Model(nn.Module):
         return logits, latent_layer
 
 
-def train(model, criterion, optimizer, train_loader, valid_loader, epochs, device):
+def train(model, criterion, optimizer, train_loader, valid_loader, epochs, device, exp_folder):
 
     total_samples = len(dataset)
     total_batches = total_samples // train_loader.batch_size
 
-    num_epochs = 10
+    num_epochs = epochs
 
     # Logging
     train_loss = np.zeros(num_epochs)
@@ -152,24 +155,40 @@ def train(model, criterion, optimizer, train_loader, valid_loader, epochs, devic
             val_losses += criterion(output, pos)
             val_lengths += len(images)
 
-    # Divide by the total accumulated batch sizes
-    val_losses /= val_lengths
-    valid_loss[epoch] = val_losses.item()
-    print(f"Epoch {epoch + 1}/{num_epochs} - Validation Loss : {val_losses.item()}")
+        # Divide by the total accumulated batch sizes
+        val_losses /= val_lengths
+        valid_loss[epoch] = val_losses.item()
+        print(f"Epoch {epoch + 1}/{num_epochs} - Validation Loss : {val_losses.item()}")
+
+    # save best model
+    best_model_path = os.path.join(exp_folder, 'best_model.pt')
+    torch.save(model.state_dict(), best_model_path)
+
+    # Save the logs as CSV
+    log_df = pd.DataFrame({
+        'valid_loss': valid_loss,
+        'train_loss': train_loss,
+    })
+
+    log_csv_path = os.path.join(exp_folder, 'training_log.csv')
+    log_df.to_csv(log_csv_path, index=False)
 
 
 #%% RUN
 if __name__ == '__main__':
+    exp_folder = os.getcwd() + '/experiments'
+    os.makedirs(exp_folder, exist_ok=True) # create experiments folder if it doesn't exist
     # set path
     data_path = os.getcwd() + '/data'
     samples_folder = data_path + '/sampled_videos'
+    print(samples_folder)
 
     # set device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
     # init dataset
-    dataset = imageDataset(samples_folder,transform=True,)
+    dataset = imageDataset(samples_folder,transform=True,device=device)
 
     # split dataset randomly into tran and validation.
     generator1 = torch.Generator().manual_seed(42) # This is optional but setting it will make outcome reproducible
@@ -181,7 +200,7 @@ if __name__ == '__main__':
     valid_loader = DataLoader(valid_dataset, batch_size=8, shuffle=True)
 
     # initialize model
-    model = Model()
+    model = Model().to(device)
     # Optimizer and Loss
     # Loss function
     criterion = nn.MSELoss()
@@ -190,7 +209,7 @@ if __name__ == '__main__':
     optimizer = torch.optim.Adam(model.parameters(), lr=5e-4) # Weight decay, L1, L2 regularization to reduce overfitting
 
     ### Static parameters
-    epochs = 10
+    epochs = 1
 
     print(f'Training with parameters \n{model}\n')
 
@@ -200,5 +219,6 @@ if __name__ == '__main__':
           train_loader=train_loader,
           valid_loader=valid_loader, 
           epochs=epochs,
-          device=device)
+          device=device,
+          exp_folder=exp_folder)
     
