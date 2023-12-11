@@ -5,6 +5,7 @@ from torch import nn
 import torch.optim as optim
 from torch.utils.data import TensorDataset, DataLoader, Dataset
 
+from matplotlib.colors import rgb_to_hsv
 from torch.utils.data import random_split
 import torch.nn.init as init
 import torchvision
@@ -78,22 +79,27 @@ class imageDataset(Dataset):
 # define network
 class Model(nn.Module):
 
-    def __init__(self, n_outputs=2):
+    def __init__(self, dropout_rate=0.25, n_outputs = 2):
         super(Model, self).__init__()
 
         self.seq = nn.Sequential(
             nn.Conv2d(3, 3, kernel_size=8, stride=3),  # First convolutional layer
             nn.ReLU(),  # SoftPlus, ReLu
             nn.MaxPool2d(2),  # Max pooling layer
+            # nn.Dropout(p=dropout_rate),  # Dropout layer
+
             nn.Conv2d(3, 1, kernel_size=4, stride=1),  # Second convolutional layer
             nn.ReLU(),  # SoftPlus, ReLu
             nn.MaxPool2d(2),  # Max pooling layer
-            # You can add a dropout layer here if needed
+            # nn.Dropout(p=dropout_rate),  # Dropout layer
+
             nn.Flatten(),
             nn.Linear(in_features=98, out_features=98),  # Adjust the in_features based on the output size of the previous layer
             nn.ReLU(),
+            nn.Dropout(p=dropout_rate),  # Dropout layer
+
             nn.Linear(in_features=98, out_features=n_outputs),
-       )
+        )
 
         # Apply weight initialization
         self.apply(self.initialize_weights)
@@ -173,6 +179,149 @@ def train(model, criterion, optimizer, train_loader, valid_loader, epochs, devic
     log_csv_path = os.path.join(exp_folder, 'training_log.csv')
     log_df.to_csv(log_csv_path, index=False)
 
+def evaluate(model, dataset, exp_folder):
+    color_mapping = {
+
+        (1, 1): "Pink",
+        (2, 1): "Cyan",
+        (3, 1): "Magenta",
+        (4, 1): "Brown",
+
+
+        (1, 2): "Lime",
+        (2, 2): "Teal",
+        (3, 2): "Indigo",
+        (4, 2): "Violet",
+
+
+        (1, 3): "Maroon",
+        (2, 3): "Navy",
+        (3, 3): "Aquamarine",
+        (4, 3): "Turquoise",
+
+
+        (1, 4): "Blue",
+        (2, 4): "Green",
+        (3, 4): "Yellow",
+        (4, 4): "Purple",
+
+        (4, 5): "Red",
+        (3, 5): "Olive",
+        (2, 5): "Gray",
+        (1, 5): "Orange",
+    }
+    plt.figure(figsize=(10, 6))
+
+    width = 5.3
+    height = 4.17
+
+    dx = width / 1000
+    dy = height / 1000
+
+    x = np.arange(0,width,dx)
+    y = np.arange(0,height,dy)
+
+    # plt.plot(x,y)
+
+    for i in range(int(height) + 1):
+        plt.plot(x, i * np.ones_like(x), color='grey',alpha=0.5)
+
+    for i in range(int(width) + 1):
+        plt.plot(i * np.ones_like(y),y, color='grey',alpha=0.5)
+
+    plt.scatter(4,3, color='red',marker='+',linewidth=2)
+
+    # Get model predictions:
+    model.eval()
+    pred_positions = []
+    true_positions = []
+
+
+    for image, pos in dataset:
+        output,_ = model(image)
+        color = color_mapping.get(tuple(pos.tolist()))
+        pred_positions.append((output.cpu(),color))
+        true_positions.append((pos.cpu(),color))
+    for pos,color in pred_positions:
+        # print(pos)
+        plt.scatter(pos[0,1].detach().numpy(),pos[0,0].detach().numpy(),color=color)
+
+    for pos,color in true_positions:
+        # print(pos)
+        plt.scatter(pos[1].detach().numpy(),pos[0].detach().numpy(),color=color,marker='x')
+
+    plt.xlim(0,width)
+    plt.ylim(0,height)
+    # Set axis scale to be constant
+    plt.axis('equal')
+    plt.show()
+
+    # save plots
+    plot_path = os.path.join(exp_folder, 'prediction_plot.png')
+    plt.savefig(plot_path)
+    print(f'Plot saved to {plot_path}')
+
+def show_latent_space(model, dataset, exp_folder):
+        
+    # Visualize the latent feature map
+    img,pos = dataset[45]
+    pred_pos,latent_layer = model(img)
+
+    fig, axs = plt.subplots(1, 2, figsize=(8, 6))
+
+    # Plot the latent feature map
+    latent_layer_map = torch.rot90(latent_layer[0].flip(1))
+    axs[0].imshow(latent_layer_map.cpu().detach().numpy(), cmap='viridis', aspect='auto')
+    axs[0].set_title('Latent Layer')
+    axs[0].set_xlabel('Feature Index')
+    axs[0].set_ylabel('Value')
+    axs[0].set_aspect('auto')  # Adjust aspect ratio to match the number of features
+
+    # Plot the image
+    image_array = img.permute(2, 1, 0)
+    axs[1].imshow(image_array.cpu(), aspect='auto')
+    axs[1].set_title('Image')
+    axs[1].set_xlabel('Width')
+    axs[1].set_ylabel('Height')
+
+    plt.tight_layout()
+    plt.show()
+
+    # save plots
+    plot_path = os.path.join(exp_folder, 'latent_plot.png')
+    plt.savefig(plot_path)
+    print(f'Plot saved to {plot_path}')
+
+    # Assuming img is an RGB image with shape (3, 108, 192)
+    image_array = img.permute(2, 1, 0).cpu().numpy()
+
+    # Convert the RGB image to grayscale using the Viridis colormap
+    hsv_image = rgb_to_hsv(image_array)
+    gray_image = hsv_image[:, :, 2]
+
+    # Create a figure with two subplots side by side
+    fig, axs = plt.subplots(1, 2, figsize=(8, 6))
+
+    # Plot the latent feature map
+    latent_layer_map = torch.rot90(latent_layer[0].flip(1))
+    axs[0].imshow(latent_layer_map.cpu().detach().numpy(), cmap='viridis', aspect='auto')
+    axs[0].set_title('Latent Layer')
+    axs[0].set_xlabel('Feature Index')
+    axs[0].set_ylabel('Value')
+
+    # Plot the grayscale image using the Viridis colormap
+    axs[1].imshow(-gray_image, cmap='viridis', aspect='auto')
+    axs[1].set_title('Grayscale Image')
+    axs[1].set_xlabel('Width')
+    axs[1].set_ylabel('Height')
+
+    plt.tight_layout()
+    plt.show()
+
+    # save plots
+    plot_path = os.path.join(exp_folder, 'latent_plot_2.png')
+    plt.savefig(plot_path)
+    print(f'Plot saved to {plot_path}')
 
 #%% RUN
 if __name__ == '__main__':
@@ -196,8 +345,10 @@ if __name__ == '__main__':
 
 
     #dataloader = DataLoader(dataset, batch_size=8, shuffle=True)
-    train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True)
-    valid_loader = DataLoader(valid_dataset, batch_size=8, shuffle=True)
+    batch_size = 32
+
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    valid_loader = DataLoader(valid_dataset, batch_size=batch_size, shuffle=True)
 
     # initialize model
     model = Model().to(device)
@@ -209,7 +360,7 @@ if __name__ == '__main__':
     optimizer = torch.optim.Adam(model.parameters(), lr=5e-4) # Weight decay, L1, L2 regularization to reduce overfitting
 
     ### Static parameters
-    epochs = 1
+    epochs = 50
 
     print(f'Training with parameters \n{model}\n')
 
@@ -220,5 +371,13 @@ if __name__ == '__main__':
           valid_loader=valid_loader, 
           epochs=epochs,
           device=device,
+          exp_folder=exp_folder)
+    
+    evaluate(model=model, 
+          dataset=dataset, 
+          exp_folder=exp_folder)
+    
+    show_latent_space(model=model, 
+          dataset=dataset, 
           exp_folder=exp_folder)
     
