@@ -79,26 +79,26 @@ class imageDataset(Dataset):
 # define network
 class Model(nn.Module):
 
-    def __init__(self, dropout_rate=0.25, n_outputs = 2):
+    def __init__(self, dropout_rate=0.5, n_outputs = 2):
         super(Model, self).__init__()
 
         self.seq = nn.Sequential(
-            nn.Conv2d(3, 3, kernel_size=8, stride=3),  # First convolutional layer
+            nn.Conv2d(3, 9, kernel_size=6, stride=2),  # First convolutional layer
             nn.ReLU(),  # SoftPlus, ReLu
             nn.MaxPool2d(2),  # Max pooling layer
             # nn.Dropout(p=dropout_rate),  # Dropout layer
 
-            nn.Conv2d(3, 1, kernel_size=4, stride=1),  # Second convolutional layer
+            nn.Conv2d(9, 9, kernel_size=3, stride=1),  # Second convolutional layer
             nn.ReLU(),  # SoftPlus, ReLu
             nn.MaxPool2d(2),  # Max pooling layer
             # nn.Dropout(p=dropout_rate),  # Dropout layer
 
             nn.Flatten(),
-            nn.Linear(in_features=98, out_features=98),  # Adjust the in_features based on the output size of the previous layer
+            nn.Linear(in_features=2376, out_features=2376),  # Adjust the in_features based on the output size of the previous layer
             nn.ReLU(),
             nn.Dropout(p=dropout_rate),  # Dropout layer
 
-            nn.Linear(in_features=98, out_features=n_outputs),
+            nn.Linear(in_features=2376, out_features=n_outputs),
         )
 
         # Apply weight initialization
@@ -136,7 +136,7 @@ def train(model, criterion, optimizer, train_loader, valid_loader, epochs, devic
     for epoch in range(num_epochs):
     # loop over all batches
         model.train()
-        train_losses, train_lengths = 0, 0
+        train_losses = 0
         for i, (images, pos) in enumerate(train_loader):
             model.train() # To enable dropout
             optimizer.zero_grad()                            # Clear gradients for the next train
@@ -146,23 +146,20 @@ def train(model, criterion, optimizer, train_loader, valid_loader, epochs, devic
             batch_loss.backward()                            # Backward pass: Compute gradient of the loss with respect to model parameters
             optimizer.step()
 
-            train_lengths += len(images)
-
         # Divide by the total accumulated batch sizes
-        train_losses /= train_lengths
+        train_losses /= train_loader.batch_size
         train_loss[epoch] = train_losses.item()
         print(f"Epoch {epoch + 1}/{num_epochs} - Training Loss : {train_losses.item()}")
 
         # Do the validaiton
         model.eval()
-        val_losses, val_lengths = 0, 0
+        val_losses = 0
         for i, (images, pos) in enumerate(valid_loader):
             output,_ = model(images)
             val_losses += criterion(output, pos)
-            val_lengths += len(images)
 
         # Divide by the total accumulated batch sizes
-        val_losses /= val_lengths
+        val_losses /= valid_loader.batch_size
         valid_loss[epoch] = val_losses.item()
         print(f"Epoch {epoch + 1}/{num_epochs} - Validation Loss : {val_losses.item()}")
 
@@ -235,20 +232,30 @@ def evaluate(model, dataset, exp_folder):
     model.eval()
     pred_positions = []
     true_positions = []
+    for images, positions in valid_loader:
+        predictions, _ = model(images)
 
+        for i, position in enumerate(positions):
+            # Access the tensor values
+            pred_values = predictions[i].cpu().detach().numpy().tolist()
 
-    for image, pos in dataset:
-        output,_ = model(image)
-        color = color_mapping.get(tuple(pos.tolist()))
-        pred_positions.append((output.cpu(),color))
-        true_positions.append((pos.cpu(),color))
+            # Access the color
+            color = color_mapping.get(tuple(position.tolist()))
+
+            # Append the tuple (pred_values, color) to pred_positions
+            pred_positions.append((pred_values, color))
+
+            # Append the tuple (position, color) to true_positions
+            true_positions.append((position.tolist(), color))
+
     for pos,color in pred_positions:
         # print(pos)
-        plt.scatter(pos[0,1].detach().numpy(),pos[0,0].detach().numpy(),color=color)
+        plt.scatter(pos[1],pos[0],color=color)
 
     for pos,color in true_positions:
         # print(pos)
-        plt.scatter(pos[1].detach().numpy(),pos[0].detach().numpy(),color=color,marker='x')
+        plt.scatter(pos[1],pos[0],color=color,marker='x')
+
 
     plt.xlim(0,width)
     plt.ylim(0,height)
@@ -260,6 +267,15 @@ def evaluate(model, dataset, exp_folder):
     plot_path = os.path.join(exp_folder, 'prediction_plot.png')
     plt.savefig(plot_path)
     print(f'Plot saved to {plot_path}')
+
+    # Save the predictions as CSV
+    preds_df = pd.DataFrame({
+        'preds': pred_positions,
+        'true': true_positions,
+    })
+
+    preds_csv_path = os.path.join(exp_folder, 'preds_log.csv')
+    preds_df.to_csv(preds_csv_path, index=False)
 
 def show_latent_space(model, dataset, exp_folder):
         
@@ -345,7 +361,7 @@ if __name__ == '__main__':
 
 
     #dataloader = DataLoader(dataset, batch_size=8, shuffle=True)
-    batch_size = 32
+    batch_size = 16
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     valid_loader = DataLoader(valid_dataset, batch_size=batch_size, shuffle=True)
@@ -360,7 +376,7 @@ if __name__ == '__main__':
     optimizer = torch.optim.Adam(model.parameters(), lr=5e-4) # Weight decay, L1, L2 regularization to reduce overfitting
 
     ### Static parameters
-    epochs = 50
+    epochs = 20
 
     print(f'Training with parameters \n{model}\n')
 
@@ -377,7 +393,7 @@ if __name__ == '__main__':
           dataset=dataset, 
           exp_folder=exp_folder)
     
-    show_latent_space(model=model, 
-          dataset=dataset, 
-          exp_folder=exp_folder)
+    # show_latent_space(model=model, 
+    #       dataset=dataset, 
+    #       exp_folder=exp_folder)
     
